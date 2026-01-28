@@ -8,13 +8,8 @@ import shutil
 app = Flask(__name__)
 CORS(app)
 
-UPLOAD_FOLDER = "uploads"
-OUTPUT_FOLDER = "outputs"
-
-LIBREOFFICE_PATH = shutil.which("libreoffice") or shutil.which("soffice")
-
-if not LIBREOFFICE_PATH:
-    raise RuntimeError("LibreOffice not found")
+UPLOAD_FOLDER = "/tmp/uploads"
+OUTPUT_FOLDER = "/tmp/outputs"
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -23,44 +18,64 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 def home():
     return "Winzaap Converter API is running"
 
+@app.route("/health")
+def health():
+    return "OK", 200
+
 @app.route("/convert", methods=["POST"])
 def convert():
     if "file" not in request.files:
-        return jsonify({"error": "No file"}), 400
+        return jsonify({"error": "No file uploaded"}), 400
+
+    libreoffice = shutil.which("libreoffice") or shutil.which("soffice")
+    if not libreoffice:
+        return jsonify({"error": "LibreOffice not available"}), 500
 
     file = request.files["file"]
 
-    filename = f"{uuid.uuid4()}_{file.filename}"
-    input_path = os.path.join(UPLOAD_FOLDER, filename)
+    unique_id = str(uuid.uuid4())
+    input_path = os.path.join(UPLOAD_FOLDER, f"{unique_id}_{file.filename}")
     file.save(input_path)
 
     try:
         subprocess.run(
             [
-                LIBREOFFICE_PATH,
+                libreoffice,
                 "--headless",
                 "--nologo",
                 "--nofirststartwizard",
                 "--convert-to", "pdf",
-                input_path,
-                "--outdir", OUTPUT_FOLDER
+                "--outdir", OUTPUT_FOLDER,
+                input_path
             ],
             check=True,
-            timeout=150
+            timeout=120
         )
 
         pdf_path = os.path.join(
             OUTPUT_FOLDER,
-            os.path.splitext(filename)[0] + ".pdf"
+            os.path.splitext(os.path.basename(input_path))[0] + ".pdf"
         )
 
         if not os.path.exists(pdf_path):
             return jsonify({"error": "PDF not generated"}), 500
 
-        return send_file(pdf_path, as_attachment=True)
+        response = send_file(pdf_path, as_attachment=True)
+
+        return response
 
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Conversion timeout"}), 504
 
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
         return jsonify({"error": "Conversion failed"}), 500
+
+    finally:
+        # 🔥 CLEANUP (very important)
+        try:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+        except Exception:
+            pass
