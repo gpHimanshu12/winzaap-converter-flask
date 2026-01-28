@@ -3,6 +3,7 @@ from flask_cors import CORS
 import subprocess
 import os
 import uuid
+import shutil
 
 app = Flask(__name__)
 CORS(app)
@@ -10,21 +11,22 @@ CORS(app)
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "outputs"
 
-LIBREOFFICE_PATH = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+LIBREOFFICE_PATH = shutil.which("libreoffice") or shutil.which("soffice")
+
+if not LIBREOFFICE_PATH:
+    raise RuntimeError("LibreOffice not found")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# ✅ Health check route
 @app.route("/")
 def home():
     return "Winzaap Converter API is running"
 
-# ✅ Word / PPT → PDF
 @app.route("/convert", methods=["POST"])
 def convert():
     if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
+        return jsonify({"error": "No file"}), 400
 
     file = request.files["file"]
 
@@ -37,25 +39,28 @@ def convert():
             [
                 LIBREOFFICE_PATH,
                 "--headless",
+                "--nologo",
+                "--nofirststartwizard",
                 "--convert-to", "pdf",
                 input_path,
-                "--outdir", OUTPUT_FOLDER,
+                "--outdir", OUTPUT_FOLDER
             ],
             check=True,
+            timeout=150
         )
 
-        pdf_name = os.path.splitext(filename)[0] + ".pdf"
-        pdf_path = os.path.join(OUTPUT_FOLDER, pdf_name)
+        pdf_path = os.path.join(
+            OUTPUT_FOLDER,
+            os.path.splitext(filename)[0] + ".pdf"
+        )
 
         if not os.path.exists(pdf_path):
             return jsonify({"error": "PDF not generated"}), 500
 
         return send_file(pdf_path, as_attachment=True)
 
-    except subprocess.CalledProcessError as e:
-        print("LibreOffice error:", e)
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Conversion timeout"}), 504
+
+    except subprocess.CalledProcessError:
         return jsonify({"error": "Conversion failed"}), 500
-
-
-if __name__ == "__main__":
-    app.run()
