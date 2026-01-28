@@ -1,7 +1,7 @@
-FROM python:3.11-slim
+FROM python:3.10-slim
 
-RUN apt-get update && \
-    apt-get install -y \
+# Install LibreOffice and dependencies
+RUN apt-get update && apt-get install -y \
     libreoffice \
     libreoffice-writer \
     libreoffice-impress \
@@ -15,8 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8000
+# Railway expects port 8080
+EXPOSE 8080
 
-CMD ["gunicorn", "-b", "0.0.0.0:$PORT", "--workers", "1", "--timeout", "180", "main:app"]
-
-
+# IMPORTANT: use shell form so $PORT works
+CMD gunicorn main:app --bind 0.0.0.0:${PORT:-8080} --timeout 180
